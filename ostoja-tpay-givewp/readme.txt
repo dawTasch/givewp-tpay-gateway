@@ -4,7 +4,7 @@ Tags: givewp, donations, tpay, blik, payment gateway
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 0.2.0
+Stable tag: 0.2.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -46,6 +46,9 @@ Tpay terms of service and privacy policy are available at https://tpay.com (TODO
 4. Turn GiveWP Test mode on, use "Test connection" and make a sandbox donation. Turn Test mode off to go live.
 
 == Changelog ==
+
+= 0.2.1 =
+* Fix: donors were sent to tpay.com instead of back to the site after paying – GiveWP passes return URLs rawurlencoded; they are now decoded and restricted to the site domain.
 
 = 0.2.0 =
 * Environment now follows GiveWP Test mode (the plugin's own sandbox switch and OSTOJA_TPAY_SANDBOX are removed).

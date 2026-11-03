@@ -99,12 +99,8 @@ class TpayGateway extends PaymentGateway
                 throw new TpayApiException('Tpay obsługuje w tej wtyczce tylko PLN, otrzymano ' . $currency . '.');
             }
 
-            $successUrl = is_array($gatewayData) && !empty($gatewayData['successUrl'])
-                ? (string) $gatewayData['successUrl']
-                : give_get_success_page_uri();
-            $errorUrl = is_array($gatewayData) && !empty($gatewayData['cancelUrl'])
-                ? (string) $gatewayData['cancelUrl']
-                : give_get_failed_transaction_uri();
+            $successUrl = self::returnUrl($gatewayData['successUrl'] ?? '', give_get_success_page_uri());
+            $errorUrl = self::returnUrl($gatewayData['cancelUrl'] ?? '', give_get_failed_transaction_uri());
 
             $payerName = trim($donation->firstName . ' ' . $donation->lastName);
 
@@ -344,6 +340,44 @@ class TpayGateway extends PaymentGateway
         PaymentGatewayLog::error('Tpay: nieobsługiwany tr_status', ['Donation ID' => $donation->id, 'tr_status' => $trStatus]);
 
         return [200, 'TRUE'];
+    }
+
+    /**
+     * Adres powrotu darczyńcy dla Tpay (payerUrls).
+     *
+     * GiveWP (Visual Form Builder) przekazuje successUrl/cancelUrl zakodowane przez rawurlencode()
+     * (zob. Give\DonationForms\Listeners\AddRedirectUrlsToGatewayData). Tpay wymaga zwykłego adresu
+     * http(s) – zakodowany odrzuca i odsyła darczyńcę na tpay.com. Dlatego dekodujemy i walidujemy;
+     * adres musi prowadzić do tej samej witryny, w razie problemu używamy wartości zapasowej.
+     *
+     * @param mixed $value
+     */
+    public static function returnUrl($value, string $fallback): string
+    {
+        $url = is_string($value) ? trim($value) : '';
+        // Maksymalnie dwa poziomy kodowania (np. %253A) – bez pętli bez końca.
+        for ($i = 0; $i < 2 && $url !== '' && !preg_match('#^https?://#i', $url); $i++) {
+            $url = rawurldecode($url);
+        }
+
+        $siteHost = strtolower((string) wp_parse_url(home_url(), PHP_URL_HOST));
+        $isValid = static function (string $candidate) use ($siteHost): bool {
+            if ($candidate === '' || preg_match('/\s/', $candidate)) {
+                return false;
+            }
+            $parts = wp_parse_url($candidate);
+            if (!is_array($parts) || !in_array(strtolower($parts['scheme'] ?? ''), ['http', 'https'], true)) {
+                return false;
+            }
+
+            return strtolower((string) ($parts['host'] ?? '')) === $siteHost;
+        };
+
+        if ($isValid($url)) {
+            return $url;
+        }
+
+        return $isValid($fallback) ? $fallback : home_url('/');
     }
 
     /**
