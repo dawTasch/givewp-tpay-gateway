@@ -165,6 +165,10 @@ Nowe wydanie: podbij `Version:` w `ostoja-tpay-givewp/ostoja-tpay-givewp.php` i 
 - Zwroty zlecane z panelu GiveWP przez API Tpay
 - Darowizny cykliczne
 
+## Wyłączenie odpowiedzialności
+
+Wtyczka jest **darmowym łącznikiem** między GiveWP a Tpay, udostępnianym **„tak jak jest”, bez jakiejkolwiek gwarancji** i bez odpowiedzialności autorów (zob. sekcje 11–12 [licencji GPL](LICENSE)). Używasz jej na własne ryzyko. Za konto i umowę z Tpay, konfigurację, testy przed uruchomieniem oraz zgodność z prawem (w tym obowiązki RODO wobec darczyńców) odpowiada właściciel strony. Płatności obsługuje Tpay na podstawie umowy między właścicielem strony a Tpay.
+
 ## Licencja
 
 GPL-2.0-or-later, zob. [LICENSE](LICENSE).

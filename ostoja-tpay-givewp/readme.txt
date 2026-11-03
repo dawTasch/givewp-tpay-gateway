@@ -34,7 +34,12 @@ This plugin connects to Tpay (https://tpay.com), operated by Krajowy Integrator 
 * secure.tpay.com / secure.sandbox.tpay.com – to download Tpay's public certificates used to verify
   notification signatures.
 
-Tpay terms of service and privacy policy are available at https://tpay.com (TODO: link the exact pages before submitting to WordPress.org).
+Payments are processed by Tpay under the site owner's own agreement with Tpay; Tpay's terms and privacy policy apply (https://tpay.com).
+
+== Disclaimer ==
+
+This plugin is a free connector provided "as is", without warranty of any kind (see sections 11–12 of the GPL).
+The site owner is responsible for their Tpay account, configuration, testing and compliance.
 
 == Installation ==
 

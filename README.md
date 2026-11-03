@@ -175,6 +175,10 @@ bin/                      test and build scripts
 - Refunds started from the GiveWP admin through the Tpay API
 - Recurring donations
 
+## Disclaimer
+
+This plugin is a **free connector** between GiveWP and Tpay, provided **"as is", without warranty of any kind** and without any liability of the authors (see sections 11–12 of the [GPL](LICENSE)). You use it at your own risk. You are responsible for your Tpay account and agreement, your configuration, testing before going live, and legal compliance (including privacy and GDPR obligations towards your donors). Payments are processed by Tpay under your own agreement with Tpay.
+
 ## License
 
 GPL-2.0-or-later, see [LICENSE](LICENSE).
