@@ -4,7 +4,7 @@ Tags: givewp, donations, tpay, blik, payment gateway
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 0.1.0
+Stable tag: 0.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -44,6 +44,9 @@ Tpay terms of service and privacy policy are available at https://tpay.com (TODO
 4. Use "Test connection" and make a sandbox donation.
 
 == Changelog ==
+
+= 0.1.1 =
+* Fix: accept the paid amount from the signed notification when the Tpay API omits payments.amountPaid (verified in sandbox).
 
 = 0.1.0 =
 * First version for sandbox testing.
