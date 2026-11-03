@@ -239,7 +239,7 @@ class TpayGateway extends PaymentGateway
         }
 
         try {
-            return $this->applyNotification($donation, $trStatus, $trId, $trCrc);
+            return $this->applyNotification($donation, $trStatus, $trId, $trCrc, $field('tr_paid'));
         } finally {
             delete_option($lock);
         }
@@ -248,7 +248,7 @@ class TpayGateway extends PaymentGateway
     /**
      * @return array{0:int,1:string}
      */
-    private function applyNotification(Donation $donation, string $trStatus, string $trId, string $trCrc): array
+    private function applyNotification(Donation $donation, string $trStatus, string $trId, string $trCrc, string $trPaid = ''): array
     {
         // Źródłem prawdy jest API Tpay, a nie treść powiadomienia.
         try {
@@ -280,7 +280,16 @@ class TpayGateway extends PaymentGateway
         }
 
         $apiStatus = strtolower((string) ($tx['status'] ?? ''));
-        $paidCents = isset($tx['payments']['amountPaid']) ? self::toCents((string) $tx['payments']['amountPaid']) : 0;
+
+        // Zapłacona kwota: z API (payments.amountPaid), a gdy API jej nie podaje (Sandbox zwraca
+        // tylko payments.attempts) – z pola tr_paid podpisanego powiadomienia (zweryfikowane JWS).
+        if (isset($tx['payments']['amountPaid']) && is_numeric($tx['payments']['amountPaid'])) {
+            $paidCents = self::toCents((string) $tx['payments']['amountPaid']);
+        } elseif ($trPaid !== '' && is_numeric(str_replace(',', '.', $trPaid))) {
+            $paidCents = self::toCents($trPaid);
+        } else {
+            $paidCents = 0;
+        }
         $current = $donation->status->getValue();
 
         if ($trStatus === 'TRUE') {
