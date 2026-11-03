@@ -128,7 +128,9 @@ class TpayGateway extends PaymentGateway
                 ],
             ];
 
-            $transaction = TpayApi::fromConfig()->createTransaction($body);
+            // GiveWP zapisuje w darowiźnie tryb (test/live) zgodny z „Trybem testowym” w chwili jej utworzenia.
+            $sandbox = self::isTestDonation($donation);
+            $transaction = TpayApi::forEnvironment($sandbox)->createTransaction($body);
 
             $donation->gatewayTransactionId = $transaction['transactionId'];
             $donation->save();
@@ -139,7 +141,7 @@ class TpayGateway extends PaymentGateway
                     /* translators: 1: Tpay transaction title, 2: environment */
                     __('Utworzono transakcję Tpay %1$s (%2$s). Oczekiwanie na płatność.', 'ostoja-tpay-givewp'),
                     $transaction['title'] !== '' ? $transaction['title'] : $transaction['transactionId'],
-                    Config::isSandbox() ? 'Sandbox' : 'produkcja'
+                    Config::label($sandbox)
                 ),
             ]);
 
@@ -189,11 +191,7 @@ class TpayGateway extends PaymentGateway
         }
 
         $jws = isset($_SERVER['HTTP_X_JWS_SIGNATURE']) ? trim((string) wp_unslash($_SERVER['HTTP_X_JWS_SIGNATURE'])) : '';
-        if (!JwsVerifier::verify($jws, $raw, Config::certBase())) {
-            PaymentGatewayLog::error('Tpay: odrzucono powiadomienie z nieprawidłowym podpisem JWS', [
-                'Has signature' => $jws !== '' ? 'yes' : 'no',
-                'Environment' => Config::envKey(),
-            ]);
+        if ($jws === '') {
             return [401, 'FALSE'];
         }
 
@@ -208,25 +206,37 @@ class TpayGateway extends PaymentGateway
         $trCrc = $field('tr_crc');
         $trStatus = strtoupper($field('tr_status'));
 
-        $securityCode = Config::securityCode();
-        if ($securityCode !== '') {
-            $expected = md5($merchantId . $trId . $trAmount . $trCrc . $securityCode);
-            if (!hash_equals($expected, strtolower($field('md5sum')))) {
-                PaymentGatewayLog::error('Tpay: niezgodna suma md5sum powiadomienia', ['tr_id' => $trId]);
-                return [401, 'FALSE'];
-            }
-        }
-
+        // Najpierw ustalamy darowiznę (tylko odczyt), bo od niej zależy środowisko,
+        // w którym weryfikujemy podpis i transakcję. Nic nie zmieniamy przed weryfikacją JWS.
         if (!preg_match('/^' . preg_quote(self::CRC_PREFIX, '/') . '(\d{1,20})$/', $trCrc, $m)) {
-            PaymentGatewayLog::error('Tpay: powiadomienie z nieznanym tr_crc', ['tr_id' => $trId]);
             return [400, 'FALSE'];
         }
 
         /** @var Donation|null $donation */
         $donation = Donation::find((int) $m[1]);
         if (!$donation || $donation->gatewayId !== self::id() || (string) $donation->gatewayTransactionId === '') {
-            PaymentGatewayLog::error('Tpay: powiadomienie nie pasuje do darowizny', ['tr_id' => $trId, 'tr_crc' => $trCrc]);
             return [400, 'FALSE'];
+        }
+
+        // Środowisko darowizny (zapisane przez GiveWP przy jej tworzeniu), a nie bieżące ustawienie –
+        // powiadomienie z Sandboxa nigdy nie oznaczy prawdziwej darowizny jako opłaconej i odwrotnie.
+        $sandbox = self::isTestDonation($donation);
+
+        if (!JwsVerifier::verify($jws, $raw, Config::certBase($sandbox))) {
+            PaymentGatewayLog::error('Tpay: odrzucono powiadomienie z nieprawidłowym podpisem JWS', [
+                'Donation ID' => $donation->id,
+                'Environment' => Config::label($sandbox),
+            ]);
+            return [401, 'FALSE'];
+        }
+
+        $securityCode = Config::securityCode($sandbox);
+        if ($securityCode !== '') {
+            $expected = md5($merchantId . $trId . $trAmount . $trCrc . $securityCode);
+            if (!hash_equals($expected, strtolower($field('md5sum')))) {
+                PaymentGatewayLog::error('Tpay: niezgodna suma md5sum powiadomienia', ['tr_id' => $trId]);
+                return [401, 'FALSE'];
+            }
         }
 
         // Blokada przed równoległym przetwarzaniem tej samej darowizny (np. podwójne powiadomienie).
@@ -250,9 +260,9 @@ class TpayGateway extends PaymentGateway
      */
     private function applyNotification(Donation $donation, string $trStatus, string $trId, string $trCrc, string $trPaid = ''): array
     {
-        // Źródłem prawdy jest API Tpay, a nie treść powiadomienia.
+        // Źródłem prawdy jest API Tpay (w środowisku darowizny), a nie treść powiadomienia.
         try {
-            $tx = TpayApi::fromConfig()->getTransaction((string) $donation->gatewayTransactionId);
+            $tx = TpayApi::forEnvironment(self::isTestDonation($donation))->getTransaction((string) $donation->gatewayTransactionId);
         } catch (TpayApiException $e) {
             PaymentGatewayLog::error('Tpay: nie udało się zweryfikować transakcji w API', [
                 'Donation ID' => $donation->id,
@@ -334,6 +344,14 @@ class TpayGateway extends PaymentGateway
         PaymentGatewayLog::error('Tpay: nieobsługiwany tr_status', ['Donation ID' => $donation->id, 'tr_status' => $trStatus]);
 
         return [200, 'TRUE'];
+    }
+
+    /**
+     * Darowizna testowa (GiveWP „Tryb testowy”) → Sandbox Tpay, w przeciwnym razie produkcja.
+     */
+    private static function isTestDonation(Donation $donation): bool
+    {
+        return $donation->mode !== null && $donation->mode->getValue() === 'test';
     }
 
     private function infoMessage(): string

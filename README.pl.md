@@ -21,7 +21,8 @@ Wtyczka powstała dla [Ostoi](https://ostoja.gda.pl). Jest darmowa i otwarta (GP
 - **Idempotencja.** Powtórzone lub równoległe powiadomienie nie zakończy darowizny drugi raz ani nie wyśle drugiego maila.
 - **Zwroty.** Powiadomienie `CHARGEBACK` z Tpay oznacza darowiznę jako „Zwróconą”.
 - **Oba typy formularzy GiveWP:** Visual Form Builder (v3) i Option-Based Form Editor (v2).
-- **Sandbox i produkcja**, plus przycisk „Testuj połączenie” w panelu.
+- **Korzysta z „Trybu testowego” GiveWP.** Gdy tryb jest włączony, płatności idą do Sandboxa Tpay, a gdy wyłączony, do produkcji. Klucze Sandbox i produkcyjne są przechowywane osobno, więc przełączanie nie wymaga ponownego wpisywania kluczy. Każda darowizna jest zawsze weryfikowana w środowisku, w którym powstała, więc powiadomienie z Sandboxa nigdy nie oznaczy prawdziwej darowizny jako opłaconej, i odwrotnie.
+- **Przycisk „Testuj połączenie”** dla każdego środowiska.
 - Reszta to standardowe GiveWP: formularze, lista darczyńców, raporty, eksport CSV, potwierdzenia, narzędzia RODO.
 
 ## Jak to działa
@@ -75,35 +76,46 @@ Wszystko działa na Waszym obecnym hostingu WordPressa. Nie potrzeba dodatkowego
 
 ### 2. Klucze Tpay
 
-W **Panelu Akceptanta Tpay**:
+Tpay ma dwa osobne konta z osobnymi kluczami:
 
-1. **Integracja → API**: wygeneruj klucze **Open API** (Client ID i Client Secret). Klucze Sandbox i produkcyjne są różne; zacznij od Sandboxa.
-2. Opcjonalnie **Powiadomienia → Bezpieczeństwo**: skopiuj *kod bezpieczeństwa*, żeby włączyć dodatkową weryfikację `md5sum`.
+| | Gdzie | Klucze używane, gdy |
+|---|---|---|
+| **Produkcja** | Panel Akceptanta Tpay → **Integracja → API** → klucze Open API | „Tryb testowy” GiveWP jest **wyłączony** |
+| **Sandbox** | Rejestracja na [register.sandbox.tpay.com](https://register.sandbox.tpay.com), potem [panel.sandbox.tpay.com](https://panel.sandbox.tpay.com) → **Integracja → API** | „Tryb testowy” GiveWP jest **włączony** |
+
+Opcjonalnie: w każdym panelu w **Powiadomienia → Bezpieczeństwo** jest *kod bezpieczeństwa*, który włącza dodatkową weryfikację `md5sum`.
 
 ### 3. Konfiguracja kluczy
 
 **Zalecane:** dopisz klucze do `wp-config.php`, powyżej linii `/* That's all, stop editing! */`:
 
 ```php
-define('OSTOJA_TPAY_SANDBOX', true);            // false = produkcja
-define('OSTOJA_TPAY_CLIENT_ID', 'twoj-client-id');
-define('OSTOJA_TPAY_CLIENT_SECRET', 'twoj-client-secret');
-define('OSTOJA_TPAY_SECURITY_CODE', 'twoj-kod-bezpieczenstwa'); // opcjonalnie
+// Produkcja („Tryb testowy” GiveWP wyłączony)
+define('OSTOJA_TPAY_CLIENT_ID', 'produkcyjny-client-id');
+define('OSTOJA_TPAY_CLIENT_SECRET', 'produkcyjny-client-secret');
+define('OSTOJA_TPAY_SECURITY_CODE', 'produkcyjny-kod');            // opcjonalnie
+
+// Sandbox („Tryb testowy” GiveWP włączony)
+define('OSTOJA_TPAY_SANDBOX_CLIENT_ID', 'sandbox-client-id');
+define('OSTOJA_TPAY_SANDBOX_CLIENT_SECRET', 'sandbox-client-secret');
+define('OSTOJA_TPAY_SANDBOX_SECURITY_CODE', 'sandbox-kod');        // opcjonalnie
 ```
 
-Klucze nie trafią wtedy ani do bazy danych, ani do jej kopii zapasowych, ani do panelu.
+Klucze nie trafią wtedy ani do bazy danych, ani do jej kopii zapasowych, ani do panelu. Wystarczy podać ten zestaw (lub zestawy), którego faktycznie używasz.
 
-**Alternatywnie:** wejdź w **Darowizny → Ustawienia → Bramki płatności → Tpay** i wpisz klucze tam. Pola sekretów są „tylko do zapisu”: zapisany sekret nie jest już nigdy wyświetlany, a puste pole przy zapisie zachowuje obecną wartość.
+**Alternatywnie:** wejdź w **Darowizny → Ustawienia → Bramki płatności → Tpay** i wpisz klucze w grupach *Produkcja* i *Sandbox*. Pola sekretów są „tylko do zapisu”: zapisany sekret nie jest już nigdy wyświetlany, a puste pole przy zapisie zachowuje obecną wartość.
 
 ### 4. Włączenie bramki
 
 1. **Darowizny → Ustawienia → Ogólne → Waluta**: ustaw **złoty polski (PLN)**.
 2. **Darowizny → Ustawienia → Bramki płatności → Bramki**: włącz **Tpay** dla używanych typów formularzy.
-3. **Darowizny → Ustawienia → Bramki płatności → Tpay**: kliknij **Testuj połączenie z Tpay**. Powinien pojawić się zielony komunikat.
+3. **Darowizny → Ustawienia → Bramki płatności → Tpay**: sprawdź tabelę statusu i kliknij **Testuj połączenie** przy każdym skonfigurowanym środowisku.
 
 ### 5. Testy w Sandboxie
 
-- [ ] Darowizna, przekierowanie do Sandboxa Tpay, płatność, powrót na stronę potwierdzenia.
+Włącz **„Tryb testowy” GiveWP** (Darowizny → Ustawienia → Bramki płatności → Bramki → *Tryb testowy*).
+
+- [ ] Darowizna, przekierowanie do `secure.sandbox.tpay.com`, płatność, powrót na stronę potwierdzenia.
 - [ ] Po kilku sekundach darowizna ma status **Zakończona** i notatkę *„Płatność potwierdzona przez Tpay (TR-…)”*.
 - [ ] Darczyńca dostał mail z potwierdzeniem GiveWP.
 - [ ] Porzucona płatność zostaje jako **Oczekująca**.
@@ -112,7 +124,9 @@ Klucze nie trafią wtedy ani do bazy danych, ani do jej kopii zapasowych, ani do
 
 ### 6. Produkcja
 
-Wpisz klucze produkcyjne, ustaw `OSTOJA_TPAY_SANDBOX` na `false` (albo wybierz *Produkcja* w ustawieniach), kliknij *Testuj połączenie* i zrób jedną małą, prawdziwą darowiznę.
+Upewnij się, że klucze produkcyjne są skonfigurowane, a *Testuj połączenie (Produkcja)* świeci na zielono. Potem **wyłącz „Tryb testowy” GiveWP** i zrób jedną małą, prawdziwą darowiznę, np. 1 zł BLIK-iem. Możesz ją zwrócić w Panelu Tpay; darowizna zmieni wtedy status na *Zwrócona*.
+
+Darowizny rozpoczęte przed przełączeniem są nadal weryfikowane w środowisku, w którym powstały.
 
 ## Maile
 
@@ -122,9 +136,9 @@ GiveWP wysyła potwierdzenia dla darczyńców i powiadomienia dla administratora
 
 | Objaw | Prawdopodobna przyczyna |
 |---|---|
-| Darczyńca widzi „Nie udało się rozpocząć płatności” | Złe klucze albo złe środowisko (np. klucze Sandbox przy wybranej produkcji). Kliknij *Testuj połączenie* i sprawdź notatki darowizny. |
+| Darczyńca widzi „Nie udało się rozpocząć płatności” | Brak kluczy albo złe klucze dla bieżącego środowiska. Na przykład „Tryb testowy” jest wyłączony, a ustawione są tylko klucze Sandbox, albo klucze Sandbox wpisano jako produkcyjne. Kliknij *Testuj połączenie* i sprawdź notatki darowizny. |
 | Darowizna zostaje „Oczekująca” mimo udanej płatności | Powiadomienie nie dociera do strony. Najczęstsze przyczyny: wtyczka bezpieczeństwa (Wordfence), Cloudflare Bot Fight Mode, przekierowanie `www` ↔ bez `www` albo HTTP → HTTPS, tryb konserwacji. Sprawdź **Darowizny → Narzędzia → Logi**. |
-| W logach „Tpay: odrzucono powiadomienie z nieprawidłowym podpisem JWS” | Środowisko nie zgadza się z kontem, które wysyła powiadomienie, albo serwer nie może połączyć się z `secure.tpay.com`. |
+| W logach „Tpay: odrzucono powiadomienie z nieprawidłowym podpisem JWS” | Serwer nie może połączyć się z `secure.tpay.com` lub `secure.sandbox.tpay.com` albo żądanie nie pochodziło od Tpay. |
 
 ## Bezpieczeństwo
 

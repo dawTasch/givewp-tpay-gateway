@@ -9,89 +9,105 @@ if (!defined('ABSPATH')) {
 /**
  * Konfiguracja bramki.
  *
- * Kolejność źródeł: stałe w wp-config.php (zalecane), potem ustawienia GiveWP.
+ * Środowisko (Sandbox/produkcja) wynika z „Trybu testowego” GiveWP
+ * (Darowizny → Ustawienia → Bramki płatności). Dla każdego środowiska są osobne klucze.
+ *
+ * Kolejność źródeł kluczy: stałe w wp-config.php (zalecane), potem ustawienia GiveWP.
  * Sekrety nigdy nie są przekazywane do przeglądarki ani wypisywane w HTML.
  */
 final class Config
 {
-    const OPT_SANDBOX = 'ostoja_tpay_sandbox';
-    const OPT_CLIENT_ID = 'ostoja_tpay_client_id';
-    const OPT_CLIENT_SECRET = 'ostoja_tpay_client_secret';
-    const OPT_SECURITY_CODE = 'ostoja_tpay_security_code';
+    /** Klucze per środowisko: [stała produkcyjna, stała sandbox, opcja produkcyjna, opcja sandbox] */
+    const KEYS = [
+        'client_id' => ['OSTOJA_TPAY_CLIENT_ID', 'OSTOJA_TPAY_SANDBOX_CLIENT_ID', 'ostoja_tpay_client_id', 'ostoja_tpay_sandbox_client_id'],
+        'client_secret' => ['OSTOJA_TPAY_CLIENT_SECRET', 'OSTOJA_TPAY_SANDBOX_CLIENT_SECRET', 'ostoja_tpay_client_secret', 'ostoja_tpay_sandbox_client_secret'],
+        'security_code' => ['OSTOJA_TPAY_SECURITY_CODE', 'OSTOJA_TPAY_SANDBOX_SECURITY_CODE', 'ostoja_tpay_security_code', 'ostoja_tpay_sandbox_security_code'],
+    ];
 
-    const CONST_SANDBOX = 'OSTOJA_TPAY_SANDBOX';
-    const CONST_CLIENT_ID = 'OSTOJA_TPAY_CLIENT_ID';
-    const CONST_CLIENT_SECRET = 'OSTOJA_TPAY_CLIENT_SECRET';
-    const CONST_SECURITY_CODE = 'OSTOJA_TPAY_SECURITY_CODE';
+    /** Stała z wersji 0.1.x – obecnie ignorowana (środowisko wybiera Tryb testowy GiveWP). */
+    const LEGACY_SANDBOX_CONSTANT = 'OSTOJA_TPAY_SANDBOX';
 
+    /**
+     * Bieżące środowisko dla NOWYCH płatności = Tryb testowy GiveWP.
+     */
     public static function isSandbox(): bool
     {
-        if (defined(self::CONST_SANDBOX)) {
-            return (bool) constant(self::CONST_SANDBOX);
-        }
-
-        // Domyślnie Sandbox – bezpieczniej przy pierwszej instalacji.
-        return self::option(self::OPT_SANDBOX, 'enabled') !== 'disabled';
+        return function_exists('give_is_test_mode') && give_is_test_mode();
     }
 
-    public static function clientId(): string
+    public static function clientId(bool $sandbox): string
     {
-        return self::value(self::CONST_CLIENT_ID, self::OPT_CLIENT_ID);
+        return self::value('client_id', $sandbox);
     }
 
-    public static function clientSecret(): string
+    public static function clientSecret(bool $sandbox): string
     {
-        return self::value(self::CONST_CLIENT_SECRET, self::OPT_CLIENT_SECRET);
+        return self::value('client_secret', $sandbox);
     }
 
     /**
      * Kod bezpieczeństwa z Panelu Tpay (Powiadomienia → Bezpieczeństwo). Opcjonalny;
      * jeśli ustawiony, dodatkowo weryfikujemy sumę md5sum powiadomienia.
      */
-    public static function securityCode(): string
+    public static function securityCode(bool $sandbox): string
     {
-        return self::value(self::CONST_SECURITY_CODE, self::OPT_SECURITY_CODE);
+        return self::value('security_code', $sandbox);
     }
 
-    public static function isConfigured(): bool
+    public static function isConfigured(bool $sandbox): bool
     {
-        return self::clientId() !== '' && self::clientSecret() !== '';
+        return self::clientId($sandbox) !== '' && self::clientSecret($sandbox) !== '';
     }
 
-    public static function isFromConstant(string $constant): bool
+    /**
+     * Czy dany klucz pochodzi ze stałej w wp-config.php.
+     */
+    public static function isFromConstant(string $key, bool $sandbox): bool
     {
-        return defined($constant) && trim((string) constant($constant)) !== '';
+        return self::constantValue(self::KEYS[$key][$sandbox ? 1 : 0]) !== '';
     }
 
-    public static function apiBase(): string
+    public static function constantName(string $key, bool $sandbox): string
     {
-        return self::isSandbox() ? 'https://openapi.sandbox.tpay.com' : 'https://api.tpay.com';
+        return self::KEYS[$key][$sandbox ? 1 : 0];
+    }
+
+    public static function optionName(string $key, bool $sandbox): string
+    {
+        return self::KEYS[$key][$sandbox ? 3 : 2];
+    }
+
+    public static function apiBase(bool $sandbox): string
+    {
+        return $sandbox ? 'https://openapi.sandbox.tpay.com' : 'https://api.tpay.com';
     }
 
     /**
      * Host certyfikatów JWS – inny dla Sandbox i produkcji.
      */
-    public static function certBase(): string
+    public static function certBase(bool $sandbox): string
     {
-        return self::isSandbox() ? 'https://secure.sandbox.tpay.com' : 'https://secure.tpay.com';
+        return $sandbox ? 'https://secure.sandbox.tpay.com' : 'https://secure.tpay.com';
     }
 
-    public static function envKey(): string
+    public static function label(bool $sandbox): string
     {
-        return self::isSandbox() ? 'sandbox' : 'live';
+        return $sandbox ? 'Sandbox' : __('produkcja', 'ostoja-tpay-givewp');
     }
 
-    private static function value(string $constant, string $option): string
+    private static function value(string $key, bool $sandbox): string
     {
-        if (self::isFromConstant($constant)) {
-            return trim((string) constant($constant));
+        $fromConstant = self::constantValue(self::KEYS[$key][$sandbox ? 1 : 0]);
+        if ($fromConstant !== '') {
+            return $fromConstant;
         }
+        $option = self::KEYS[$key][$sandbox ? 3 : 2];
 
-        return trim((string) self::option($option, ''));
+        return function_exists('give_get_option') ? trim((string) give_get_option($option, '')) : '';
     }
 
-    private static function option(string $key, $default)
+    private static function constantValue(string $constant): string
     {
-        return function_exists('give_get_option') ? give_get_option($key, $default) : $default;
+        return defined($constant) ? trim((string) constant($constant)) : '';
     }
 }

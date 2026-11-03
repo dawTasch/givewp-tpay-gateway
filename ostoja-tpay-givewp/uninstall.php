@@ -10,8 +10,10 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
 
 $settings = get_option('give_settings');
 if (is_array($settings)) {
-    foreach (['ostoja_tpay_sandbox', 'ostoja_tpay_client_id', 'ostoja_tpay_client_secret', 'ostoja_tpay_security_code', 'ostoja_tpay_status'] as $key) {
-        unset($settings[$key]);
+    foreach (array_keys($settings) as $key) {
+        if (strpos((string) $key, 'ostoja_tpay_') === 0) {
+            unset($settings[$key]);
+        }
     }
     update_option('give_settings', $settings);
 }

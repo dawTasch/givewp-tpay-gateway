@@ -18,7 +18,8 @@ Built for [Ostoja](https://ostoja.gda.pl). Free and open source (GPL-2.0-or-late
 - **Idempotent.** Repeated or parallel notifications never complete a donation twice or send duplicate emails.
 - **Refunds.** Tpay `CHARGEBACK` notifications mark the donation as *Refunded*.
 - **Works with both GiveWP form types:** Visual Form Builder (v3) and Option-Based Form Editor (v2).
-- **Sandbox and production** environments, plus a "Test connection" button in the admin.
+- **Uses GiveWP Test mode.** When GiveWP *Test mode* is on, payments go to the Tpay sandbox; when it is off, they go to production. Sandbox and production keys are stored separately, so switching never requires re-entering keys. Each donation is always verified in the environment it was created in, so a sandbox notification can never complete a live donation, and the reverse is also true.
+- **"Test connection" button** for each environment.
 - Everything else is standard GiveWP: forms, donor list, reports, CSV export, receipts and GDPR tools.
 
 ## How it works
@@ -72,35 +73,46 @@ Everything runs on your existing WordPress hosting. No extra server or SaaS is n
 
 ### 2. Get your Tpay keys
 
-In the **Tpay Merchant Panel**:
+Tpay has two separate accounts with separate keys:
 
-1. **Integration → API**: generate **Open API** keys (Client ID and Client Secret). Sandbox and production keys are different; start with sandbox.
-2. Optional: **Notifications → Security**: copy the *security code* to enable the extra `md5sum` check.
+| | Where | Keys used when |
+|---|---|---|
+| **Production** | Tpay Merchant Panel → **Integration → API** → Open API keys | GiveWP *Test mode* is **off** |
+| **Sandbox** | Register at [register.sandbox.tpay.com](https://register.sandbox.tpay.com), then [panel.sandbox.tpay.com](https://panel.sandbox.tpay.com) → **Integration → API** | GiveWP *Test mode* is **on** |
+
+Optional: **Notifications → Security** in each panel shows a *security code* that enables an extra `md5sum` check.
 
 ### 3. Configure the keys
 
 **Recommended:** add the keys to `wp-config.php`, above the line `/* That's all, stop editing! */`:
 
 ```php
-define('OSTOJA_TPAY_SANDBOX', true);            // false = production
-define('OSTOJA_TPAY_CLIENT_ID', 'your-client-id');
-define('OSTOJA_TPAY_CLIENT_SECRET', 'your-client-secret');
-define('OSTOJA_TPAY_SECURITY_CODE', 'your-security-code'); // optional
+// Production (GiveWP Test mode OFF)
+define('OSTOJA_TPAY_CLIENT_ID', 'production-client-id');
+define('OSTOJA_TPAY_CLIENT_SECRET', 'production-client-secret');
+define('OSTOJA_TPAY_SECURITY_CODE', 'production-security-code');   // optional
+
+// Sandbox (GiveWP Test mode ON)
+define('OSTOJA_TPAY_SANDBOX_CLIENT_ID', 'sandbox-client-id');
+define('OSTOJA_TPAY_SANDBOX_CLIENT_SECRET', 'sandbox-client-secret');
+define('OSTOJA_TPAY_SANDBOX_SECURITY_CODE', 'sandbox-security-code'); // optional
 ```
 
-This way the keys never reach the database, database backups or the admin UI.
+This way the keys never reach the database, database backups or the admin UI. You only need the set or sets you actually use.
 
-**Alternative:** go to **Donations → Settings → Payment Gateways → Tpay** and enter the keys there. Secret fields are write-only: a saved secret is never shown again, and leaving the field empty keeps the current value.
+**Alternative:** go to **Donations → Settings → Payment Gateways → Tpay** and enter the keys there, in the *Production* and *Sandbox* groups. Secret fields are write-only: a saved secret is never shown again, and leaving the field empty keeps the current value.
 
 ### 4. Enable the gateway
 
 1. **Donations → Settings → General → Currency**: set **Polish Złoty (PLN)**.
 2. **Donations → Settings → Payment Gateways → Gateways**: enable **Tpay** for the form types you use.
-3. **Donations → Settings → Payment Gateways → Tpay**: click **Test connection with Tpay**. You should see a green confirmation.
+3. **Donations → Settings → Payment Gateways → Tpay**: check the status table and click **Test connection** for each configured environment.
 
 ### 5. Test in sandbox
 
-- [ ] Make a donation, get redirected to Tpay sandbox, pay, return to the confirmation page.
+Turn **GiveWP Test mode on** (Donations → Settings → Payment Gateways → Gateways → *Test mode*).
+
+- [ ] Make a donation, get redirected to `secure.sandbox.tpay.com`, pay, return to the confirmation page.
 - [ ] Within a few seconds the donation is **Complete** with the note *"Płatność potwierdzona przez Tpay (TR-…)"* (plugin messages are currently in Polish).
 - [ ] The donor receives the GiveWP receipt email.
 - [ ] An abandoned payment stays **Pending**.
@@ -109,7 +121,9 @@ This way the keys never reach the database, database backups or the admin UI.
 
 ### 6. Go live
 
-Switch to production keys, set `OSTOJA_TPAY_SANDBOX` to `false` (or choose *Production* in settings), click *Test connection*, and make one small real donation.
+Make sure the production keys are configured and *Test connection (Production)* is green. Then turn **GiveWP Test mode off** and make one small real donation, for example 1 zł via BLIK. You can refund it in the Tpay panel; the donation will then switch to *Refunded*.
+
+Donations started before the switch are still verified in the environment they were created in.
 
 ## Emails
 
@@ -119,9 +133,9 @@ GiveWP sends donor receipts and admin notifications through `wp_mail()`. For rel
 
 | Symptom | Likely cause |
 |---|---|
-| Donors see "Nie udało się rozpocząć płatności" (could not start the payment) | Wrong keys or wrong environment (sandbox keys with production selected). Use *Test connection*, then check the donation notes. |
+| Donors see "Nie udało się rozpocząć płatności" (could not start the payment) | Keys missing or wrong for the current environment. For example, Test mode is off but only sandbox keys are set, or sandbox keys were entered as production keys. Use *Test connection*, then check the donation notes. |
 | Donation stays *Pending* after a successful payment | The notification is not reaching your site. Common causes: a security plugin (Wordfence), Cloudflare Bot Fight Mode, a `www` ↔ non-`www` or HTTP → HTTPS redirect, or maintenance mode. Check **Donations → Tools → Logs**. |
-| `Tpay: odrzucono powiadomienie z nieprawidłowym podpisem JWS` (invalid JWS signature) in logs | The environment doesn't match the account sending the notification, or outgoing HTTPS to `secure.tpay.com` is blocked. |
+| `Tpay: odrzucono powiadomienie z nieprawidłowym podpisem JWS` (invalid JWS signature) in logs | Outgoing HTTPS to `secure.tpay.com` or `secure.sandbox.tpay.com` is blocked, or the request did not come from Tpay. |
 
 ## Security
 

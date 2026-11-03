@@ -25,13 +25,13 @@ final class TpayApi
         $this->clientSecret = $clientSecret;
     }
 
-    public static function fromConfig(): self
+    public static function forEnvironment(bool $sandbox): self
     {
-        if (!Config::isConfigured()) {
-            throw new TpayApiException('Brak konfiguracji kluczy Tpay.');
+        if (!Config::isConfigured($sandbox)) {
+            throw new TpayApiException(sprintf('Brak kluczy Tpay dla środowiska: %s.', Config::label($sandbox)));
         }
 
-        return new self(Config::apiBase(), Config::clientId(), Config::clientSecret());
+        return new self(Config::apiBase($sandbox), Config::clientId($sandbox), Config::clientSecret($sandbox));
     }
 
     /**
