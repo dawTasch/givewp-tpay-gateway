@@ -1,0 +1,19 @@
+# Local archive of the old prototype – not part of the repository
+_archive/
+
+# Build output
+dist/
+*.zip
+
+# Secrets – never commit keys
+.env
+*.pem
+*.key
+wp-config*.php
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
