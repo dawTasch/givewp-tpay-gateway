@@ -99,12 +99,19 @@ final class JwsVerifier
             }
         }
 
-        $response = wp_safe_remote_get($url, ['timeout' => 10, 'redirection' => 0]);
-        if (is_wp_error($response) || (int) wp_remote_retrieve_response_code($response) !== 200) {
+        // Po nieudanym pobraniu nie próbujemy ponownie przez minutę – przy awarii Tpay zalew żądań
+        // nie zamieni się w zalew połączeń wychodzących i zablokowanych procesów PHP.
+        $failKey = 'ostoja_tpay_pem_fail_' . md5($url);
+        if (get_transient($failKey)) {
             return '';
         }
-        $pem = (string) wp_remote_retrieve_body($response);
-        if (strpos($pem, '-----BEGIN CERTIFICATE-----') === false || strlen($pem) > 20000) {
+
+        $response = wp_safe_remote_get($url, ['timeout' => 5, 'redirection' => 0]);
+        $pem = (!is_wp_error($response) && (int) wp_remote_retrieve_response_code($response) === 200)
+            ? (string) wp_remote_retrieve_body($response)
+            : '';
+        if ($pem === '' || strpos($pem, '-----BEGIN CERTIFICATE-----') === false || strlen($pem) > 20000) {
+            set_transient($failKey, 1, MINUTE_IN_SECONDS);
             return '';
         }
         set_transient($key, $pem, self::CERT_TTL);

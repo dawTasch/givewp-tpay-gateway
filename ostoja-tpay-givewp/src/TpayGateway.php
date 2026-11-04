@@ -181,14 +181,19 @@ class TpayGateway extends PaymentGateway
             return [405, 'FALSE'];
         }
 
+        // Każde odrzucenie przed pełną weryfikacją zwraca tę samą odpowiedź – nie zdradzamy,
+        // które numery darowizn istnieją ani na którym etapie żądanie zostało odrzucone.
+        $reject = [401, 'FALSE'];
+
         $raw = (string) file_get_contents('php://input');
-        if ($raw === '' || strlen($raw) > 20000) {
-            return [400, 'FALSE'];
+        // Powiadomienie Tpay ma kilkanaście pól – limit chroni przed ostrzeżeniami parse_str i nadużyciami.
+        if ($raw === '' || strlen($raw) > 20000 || substr_count($raw, '&') > 100) {
+            return $reject;
         }
 
         $jws = isset($_SERVER['HTTP_X_JWS_SIGNATURE']) ? trim((string) wp_unslash($_SERVER['HTTP_X_JWS_SIGNATURE'])) : '';
         if ($jws === '') {
-            return [401, 'FALSE'];
+            return $reject;
         }
 
         parse_str($raw, $data);
@@ -204,14 +209,14 @@ class TpayGateway extends PaymentGateway
 
         // Najpierw ustalamy darowiznę (tylko odczyt), bo od niej zależy środowisko,
         // w którym weryfikujemy podpis i transakcję. Nic nie zmieniamy przed weryfikacją JWS.
-        if (!preg_match('/^' . preg_quote(self::CRC_PREFIX, '/') . '(\d{1,20})$/', $trCrc, $m)) {
-            return [400, 'FALSE'];
+        if (!preg_match('/^' . preg_quote(self::CRC_PREFIX, '/') . '(\d{1,20})$/', $trCrc, $m) || $trId === '') {
+            return $reject;
         }
 
         /** @var Donation|null $donation */
         $donation = Donation::find((int) $m[1]);
         if (!$donation || $donation->gatewayId !== self::id() || (string) $donation->gatewayTransactionId === '') {
-            return [400, 'FALSE'];
+            return $reject;
         }
 
         // Środowisko darowizny (zapisane przez GiveWP przy jej tworzeniu), a nie bieżące ustawienie –
@@ -219,35 +224,42 @@ class TpayGateway extends PaymentGateway
         $sandbox = self::isTestDonation($donation);
 
         if (!JwsVerifier::verify($jws, $raw, Config::certBase($sandbox))) {
-            PaymentGatewayLog::error('Tpay: odrzucono powiadomienie z nieprawidłowym podpisem JWS', [
-                'Donation ID' => $donation->id,
+            // Najwyżej jeden wpis na 10 minut – zalew fałszywych żądań nie zapełni tabeli logów.
+            self::logThrottled('bad_jws', 'Tpay: odrzucono powiadomienie z nieprawidłowym podpisem JWS (kolejne przez 10 min nie są logowane)', [
                 'Environment' => Config::label($sandbox),
             ]);
-            return [401, 'FALSE'];
+            return $reject;
         }
 
         $securityCode = Config::securityCode($sandbox);
         if ($securityCode !== '') {
             $expected = md5($merchantId . $trId . $trAmount . $trCrc . $securityCode);
             if (!hash_equals($expected, strtolower($field('md5sum')))) {
-                PaymentGatewayLog::error('Tpay: niezgodna suma md5sum powiadomienia', ['tr_id' => $trId]);
-                return [401, 'FALSE'];
+                self::logThrottled('bad_md5', 'Tpay: niezgodna suma md5sum powiadomienia – sprawdź kod bezpieczeństwa', ['tr_id' => $trId]);
+                return $reject;
             }
         }
 
-        // Blokada przed równoległym przetwarzaniem tej samej darowizny (np. podwójne powiadomienie).
-        $lock = 'ostoja_tpay_lock_' . $donation->id;
-        if (!add_option($lock, time(), '', 'no')) {
-            if ((int) get_option($lock) > time() - 60) {
-                return [503, 'FALSE']; // Tpay ponowi później.
-            }
-            update_option($lock, time(), false);
+        // Atomowa blokada (MySQL GET_LOCK) – równoległe powiadomienia tej samej darowizny
+        // przetwarzane są po kolei; drugie zobaczy już zmieniony status (brak podwójnych maili).
+        $donationId = (int) $donation->id;
+        $lock = self::acquireLock($donationId);
+        if ($lock === false) {
+            return [503, 'FALSE']; // Inny proces przetwarza tę darowiznę – Tpay ponowi.
         }
 
         try {
+            // Świeży stan z bazy po założeniu blokady.
+            $donation = Donation::find($donationId);
+            if (!$donation) {
+                return $reject;
+            }
+
             return $this->applyNotification($donation, $trStatus, $trId, $trCrc, $field('tr_paid'));
         } finally {
-            delete_option($lock);
+            if ($lock === true) {
+                self::releaseLock($donationId);
+            }
         }
     }
 
@@ -268,21 +280,28 @@ class TpayGateway extends PaymentGateway
         }
 
         $expectedCents = self::toCents($donation->amount->formatToDecimal());
-        $txCurrency = strtoupper((string) ($tx['currency'] ?? 'PLN'));
-        $txHidden = (string) ($tx['hiddenDescription'] ?? $trCrc);
-        $txId = (string) ($tx['transactionId'] ?? $donation->gatewayTransactionId);
-        $txAmountCents = isset($tx['amount']) ? self::toCents((string) $tx['amount']) : $expectedCents;
 
-        if ($txId !== (string) $donation->gatewayTransactionId || $txHidden !== $trCrc || $txCurrency !== 'PLN' || $txAmountCents !== $expectedCents) {
-            PaymentGatewayLog::error('Tpay: transakcja w API nie zgadza się z darowizną', [
-                'Donation ID' => $donation->id,
-                'tr_id' => $trId,
-            ]);
-            DonationNote::create([
-                'donationId' => $donation->id,
-                'content' => __('Tpay: dane transakcji nie zgadzają się z darowizną (kwota/waluta/ID). Status NIE został zmieniony – sprawdź w Panelu Tpay.', 'ostoja-tpay-givewp'),
-            ]);
-            return [400, 'FALSE'];
+        // Każde z tych pól MUSI być w odpowiedzi API – brak pola to niezgodność, a nie „pomiń sprawdzenie”.
+        foreach (['transactionId', 'title', 'hiddenDescription', 'currency', 'amount'] as $required) {
+            if (!isset($tx[$required]) || !is_scalar($tx[$required]) || (string) $tx[$required] === '') {
+                return $this->rejectMismatch($donation, $trId, 'brak pola ' . $required . ' w odpowiedzi API');
+            }
+        }
+
+        // Powiadomienie musi dotyczyć NASZEJ transakcji: tr_id (tytuł nadany przez Tpay, unikalny)
+        // musi być równy tytułowi transakcji zapisanej przy tej darowiźnie. Podpis JWS dowodzi tylko,
+        // że wiadomość wysłał Tpay – inny klient Tpay mógłby utworzyć własną transakcję z naszym tr_crc.
+        if ((string) $tx['transactionId'] !== (string) $donation->gatewayTransactionId) {
+            return $this->rejectMismatch($donation, $trId, 'ID transakcji');
+        }
+        if (!hash_equals((string) $tx['title'], $trId)) {
+            return $this->rejectMismatch($donation, $trId, 'tytuł transakcji (tr_id) – powiadomienie dotyczy innej transakcji');
+        }
+        if ((string) $tx['hiddenDescription'] !== $trCrc) {
+            return $this->rejectMismatch($donation, $trId, 'hiddenDescription');
+        }
+        if (strtoupper((string) $tx['currency']) !== 'PLN' || self::toCents((string) $tx['amount']) !== $expectedCents) {
+            return $this->rejectMismatch($donation, $trId, 'kwota lub waluta');
         }
 
         $apiStatus = strtolower((string) ($tx['status'] ?? ''));
@@ -303,8 +322,24 @@ class TpayGateway extends PaymentGateway
                 return [200, 'TRUE']; // Już przetworzone – idempotencja.
             }
 
-            if (!in_array($apiStatus, ['correct', 'paid'], true) || $paidCents < $expectedCents) {
-                // API jeszcze nie potwierdza – odpowiadamy błędem, Tpay ponowi powiadomienie.
+            if (!in_array($apiStatus, ['correct', 'paid'], true)) {
+                // API jeszcze nie potwierdza – Tpay ponowi powiadomienie. Ślad dla administratora (raz na godzinę).
+                self::noteOnce($donation, 'api_not_paid', sprintf(
+                    __('Tpay zgłosił płatność (%1$s), ale API Tpay nie potwierdza jej jeszcze (status: %2$s). Czekamy na ponowienie powiadomienia.', 'ostoja-tpay-givewp'),
+                    $trId,
+                    $apiStatus !== '' ? $apiStatus : '–'
+                ));
+                return [503, 'FALSE'];
+            }
+
+            if ($paidCents < $expectedCents) {
+                self::noteOnce($donation, 'underpaid', sprintf(
+                    __('Tpay (%1$s): zapłacono %2$s PLN, oczekiwano %3$s PLN. Status NIE został zmieniony – sprawdź w Panelu Tpay.', 'ostoja-tpay-givewp'),
+                    $trId,
+                    number_format($paidCents / 100, 2, ',', ' '),
+                    number_format($expectedCents / 100, 2, ',', ' ')
+                ));
+                self::logThrottled('underpaid_' . $donation->id, 'Tpay: niedopłata', ['Donation ID' => $donation->id, 'tr_id' => $trId]);
                 return [503, 'FALSE'];
             }
 
@@ -324,22 +359,112 @@ class TpayGateway extends PaymentGateway
         }
 
         if ($trStatus === 'CHARGEBACK') {
+            // Tpay wysyła CHARGEBACK przy pełnym zwrocie. Powiadomienie jest już powiązane z naszą
+            // transakcją (tytuł + ID sprawdzone wyżej w API), więc nie da się go podstawić z cudzej transakcji.
             if ($current === DonationStatus::COMPLETE) {
                 $donation->status = DonationStatus::REFUNDED();
                 $donation->save();
                 DonationNote::create([
                     'donationId' => $donation->id,
-                    'content' => sprintf(__('Tpay zgłosił zwrot środków (%s).', 'ostoja-tpay-givewp'), $trId),
+                    'content' => sprintf(
+                        __('Tpay zgłosił zwrot środków (%1$s, status w API: %2$s).', 'ostoja-tpay-givewp'),
+                        $trId,
+                        $apiStatus !== '' ? $apiStatus : '–'
+                    ),
                 ]);
             }
 
             return [200, 'TRUE'];
         }
 
-        // Nieznany status – potwierdzamy odbiór, ale nic nie zmieniamy.
+        // Nieznany status – potwierdzamy odbiór (inaczej Tpay ponawiałby bez końca), ale nic nie zmieniamy
+        // i zostawiamy ślad dla administratora.
+        self::noteOnce($donation, 'unknown_' . $trStatus, sprintf(
+            __('Tpay przysłał nieobsługiwany status „%1$s” (%2$s). Status darowizny NIE został zmieniony – sprawdź w Panelu Tpay.', 'ostoja-tpay-givewp'),
+            sanitize_text_field($trStatus),
+            $trId
+        ));
         PaymentGatewayLog::error('Tpay: nieobsługiwany tr_status', ['Donation ID' => $donation->id, 'tr_status' => $trStatus]);
 
         return [200, 'TRUE'];
+    }
+
+    /**
+     * Niezgodność danych z API: notatka (najwyżej raz na godzinę na darowiznę) + log, status bez zmian.
+     *
+     * @return array{0:int,1:string}
+     */
+    private function rejectMismatch(Donation $donation, string $trId, string $what): array
+    {
+        self::noteOnce($donation, 'mismatch_' . $what, sprintf(
+            __('Tpay: powiadomienie odrzucone – niezgodność: %1$s (tr_id: %2$s). Status NIE został zmieniony.', 'ostoja-tpay-givewp'),
+            $what,
+            $trId
+        ));
+        self::logThrottled('mismatch_' . $donation->id, 'Tpay: transakcja w API nie zgadza się z powiadomieniem/darowizną', [
+            'Donation ID' => $donation->id,
+            'tr_id' => $trId,
+            'Mismatch' => $what,
+        ]);
+
+        return [400, 'FALSE'];
+    }
+
+    /**
+     * Notatka przy darowiźnie, najwyżej raz na $ttl dla danego klucza (ponawiane powiadomienia nie spamują).
+     */
+    private static function noteOnce(Donation $donation, string $key, string $content, int $ttl = HOUR_IN_SECONDS): void
+    {
+        $flag = 'ostoja_tpay_note_' . md5($donation->id . '|' . $key);
+        if (get_transient($flag)) {
+            return;
+        }
+        set_transient($flag, 1, $ttl);
+        DonationNote::create(['donationId' => $donation->id, 'content' => $content]);
+    }
+
+    /**
+     * Wpis w logu GiveWP najwyżej raz na $ttl dla danego klucza.
+     */
+    private static function logThrottled(string $key, string $message, array $context = [], int $ttl = 600): void
+    {
+        $flag = 'ostoja_tpay_log_' . md5($key);
+        if (get_transient($flag)) {
+            return;
+        }
+        set_transient($flag, 1, $ttl);
+        PaymentGatewayLog::error($message, $context);
+    }
+
+    /**
+     * Blokada MySQL dla darowizny. Zwraca: true – założona, false – zajęta (inny proces),
+     * null – serwer bazy nie obsługuje GET_LOCK (przetwarzamy bez blokady, jak wcześniej).
+     */
+    private static function acquireLock(int $donationId): ?bool
+    {
+        global $wpdb;
+        $result = $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 5)', self::lockName($donationId)));
+        if ($result === null) {
+            return null;
+        }
+
+        return (string) $result === '1';
+    }
+
+    private static function releaseLock(int $donationId): void
+    {
+        global $wpdb;
+        $wpdb->query($wpdb->prepare('SELECT RELEASE_LOCK(%s)', self::lockName($donationId)));
+    }
+
+    /**
+     * Nazwa blokady unikalna dla bazy i prefiksu tabel (GET_LOCK działa na cały serwer MySQL), maks. 64 znaki.
+     */
+    private static function lockName(int $donationId): string
+    {
+        global $wpdb;
+
+        return 'ostoja_tpay_' . substr(md5(DB_NAME . '|' . $wpdb->prefix), 0, 16) . '_' . $donationId;
     }
 
     /**

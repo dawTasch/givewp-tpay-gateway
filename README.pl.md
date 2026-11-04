@@ -144,7 +144,9 @@ GiveWP wysyła potwierdzenia dla darczyńców i powiadomienia dla administratora
 
 - Sekrety są używane wyłącznie po stronie serwera i nie trafiają do HTML, nawet jako wartość pola hasła.
 - Adres powiadomień przyjmuje tylko żądania `POST` podpisane przez Tpay. Adres certyfikatu jest przypięty osobno dla każdego środowiska, więc wtyczka nigdy nie pobiera adresów podanych przez nadawcę. Certyfikat musi prowadzić do głównego certyfikatu Tpay i być ważny.
-- Status zmienia się dopiero po ponownym pobraniu transakcji z API Tpay i zgodności ID, `hiddenDescription`, kwoty i waluty.
+- Status zmienia się dopiero po ponownym pobraniu transakcji z API Tpay i zgodności ID, `hiddenDescription`, kwoty i waluty. Dodatkowo `tr_id` z powiadomienia musi być równy tytułowi *naszej* transakcji. Sam podpis Tpay dowodzi tylko, że wiadomość wysłał Tpay, więc inny klient Tpay nie może użyć numeru naszej darowizny, żeby oznaczyć ją jako opłaconą lub zwróconą.
+- Równoległe powiadomienia tej samej darowizny są przetwarzane po kolei dzięki blokadzie w bazie (`GET_LOCK`), więc nie ma podwójnego zakończenia ani podwójnych maili.
+- Każde odrzucenie przed weryfikacją zwraca tę samą odpowiedź `401 FALSE`, więc adres powiadomień nie zdradza, które numery darowizn istnieją. Wpisy o złym podpisie trafiają do logu najwyżej raz na 10 minut.
 - Adres płatności musi być w domenie `tpay.com` i używać HTTPS.
 
 Znalazłeś podatność? Zgłoś ją prywatnie przez GitHub Security Advisories, nie w publicznym zgłoszeniu (issue).

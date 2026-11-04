@@ -141,7 +141,14 @@ final class Settings
      */
     public static function keepSecretIfEmpty($value, $option, $rawValue)
     {
-        return (is_string($value) && trim($value) !== '') ? trim($value) : null;
+        // Surowa wartość (GiveWP podaje ją po wp_unslash) – sanitize_text_field mógłby zmienić znaki
+        // w sekrecie (np. %xx, <...>) i zepsuć logowanie albo sumę md5sum. Sekret nigdy nie jest wyświetlany.
+        $secret = is_string($rawValue) ? trim($rawValue) : '';
+        if ($secret === '' || preg_match('/[\x00-\x1F\x7F]/', $secret) || strlen($secret) > 255) {
+            return null;
+        }
+
+        return $secret;
     }
 
     public static function renderStatusField(array $field, $optionValue): void
@@ -243,7 +250,8 @@ final class Settings
 
     public static function adminNotices(): void
     {
-        if (!current_user_can('manage_options')) {
+        // Te same uprawnienia co do uruchomienia testu połączenia.
+        if (!current_user_can('manage_give_settings') && !current_user_can('manage_options')) {
             return;
         }
 

@@ -4,7 +4,7 @@ Tags: givewp, donations, tpay, blik, payment gateway
 Requires at least: 6.0
 Tested up to: 6.9
 Requires PHP: 7.4
-Stable tag: 0.2.1
+Stable tag: 0.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -51,6 +51,15 @@ The site owner is responsible for their Tpay account, configuration, testing and
 4. Turn GiveWP Test mode on, use "Test connection" and make a sandbox donation. Turn Test mode off to go live.
 
 == Changelog ==
+
+= 0.3.0 =
+* Security: a notification must match our own transaction title (tr_id), so other Tpay merchants cannot complete or refund a donation by reusing its reference.
+* Security: atomic database lock per donation (no double completion or duplicate receipts).
+* Security: uniform responses before verification, throttled invalid-signature logging, input size limit.
+* Missing fields in the Tpay API response are treated as a mismatch.
+* Donation notes for underpayment, unconfirmed payment and unknown statuses.
+* Certificate fetch failures are cached for 1 minute; shorter timeout.
+* Secrets are stored exactly as entered; Give Managers see the connection test result.
 
 = 0.2.1 =
 * Fix: donors were sent to tpay.com instead of back to the site after paying – GiveWP passes return URLs rawurlencoded; they are now decoded and restricted to the site domain.

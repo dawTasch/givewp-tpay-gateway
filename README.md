@@ -141,7 +141,9 @@ GiveWP sends donor receipts and admin notifications through `wp_mail()`. For rel
 
 - Secrets are used server-side only and never rendered in HTML, not even as password field values.
 - The notification endpoint accepts only `POST` requests signed by Tpay. The signing certificate URL is pinned per environment, so the plugin never fetches attacker-supplied URLs, and the certificate must chain to Tpay's root CA and be within its validity period.
-- The donation status changes only after the transaction is re-fetched from the Tpay API and the ID, `hiddenDescription`, amount and currency all match.
+- The donation status changes only after the transaction is re-fetched from the Tpay API and the ID, `hiddenDescription`, amount and currency all match. The notification's `tr_id` must also equal *our* transaction's title. A valid Tpay signature alone only proves the message came from Tpay, so another Tpay merchant cannot reuse our donation reference to complete or refund a donation.
+- Concurrent notifications for the same donation are serialised with a database lock (`GET_LOCK`), so there is no double completion and no duplicate receipts.
+- Every rejection before verification returns the same `401 FALSE`, so the endpoint does not reveal which donation IDs exist. Invalid-signature log entries are throttled (at most one per 10 minutes).
 - The payment redirect URL must be HTTPS on `tpay.com`.
 
 Found a vulnerability? Please report it privately via GitHub Security Advisories, not in a public issue.
